@@ -703,7 +703,7 @@ Configure via `idf.py menuconfig`:
 | `ESP_LV_ADAPTER_PARTIAL_AUX_IMG_CACHE` | Resolve repeated decoding issues in partial modes by setting image cache to max |
 | `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` | LVGL 9.5/9.6: draw a rotated `DOUBLE_DIRECT` display in the panel's orientation (see Rotation Limitations) |
 | `ESP_LVGL_ADAPTER_ROTATE_IMAGE_CACHE_SIZE_KB` | Optional PSRAM budget for immutable rotated images; zero disables it (default) |
-| `ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB` | Optional internal RAM a large PSRAM picture (camera, video) is turned through, both bands together; zero disables it (default) |
+| `ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS` | Turn a large PSRAM picture (camera, video) through the first tile, lent in two bands; no RAM of its own (default y) |
 
 **Default Task Stack Size**:
 - LVGL adapter task stack: 8KB
@@ -783,16 +783,19 @@ writing the frame buffer costs it nothing over writing internal RAM, but its
 16x16 macro-block reads of PSRAM take twice as long, and longer still while the
 panel scans out and a camera writes PSRAM.
 
-`CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB` gives such a picture two bands of
-internal DMA-capable RAM: the AXI GDMA (`esp_async_memcpy`) copies a band of the
-picture's whole rows into one in a single run while the PPA turns the band before
-out of the other. A band holds as many rows as fit, a multiple of 8. Measured by
-a probe firmware on each board, the panel scanning out and the camera streaming:
+`CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS` (on by default) turns such a
+picture through two bands of internal RAM: the AXI GDMA (`esp_async_memcpy`)
+copies a band of the picture's whole rows into one in a single run while the
+PPA turns the band before out of the other. The bands take no RAM of their
+own: while the picture is turned no tile is drawn and the second core is idle,
+so the two halves of the first tile are lent as the bands, 64 KiB each with the
+default tiles -- 24 rows of a 1280-wide picture. Measured by a probe firmware on
+each board, the panel scanning out and the camera streaming:
 
 | A whole picture, the camera streaming | straight from PSRAM | bands of 16 rows | bands of 32 rows |
 |---|---:|---:|---:|
-| Tab5, 1280x720 turned 270 | 44.3 ms | 24.4 ms (80 KiB) | 18.7 ms (160 KiB) |
-| Waveshare 7B, 1024x600 turned 180 | 31.6 ms | 13.8 ms (64 KiB) | 12.4 ms (128 KiB) |
+| Tab5, 1280x720 turned 270 | 44.3 ms | 24.4 ms | 18.7 ms |
+| Waveshare 7B, 1024x600 turned 180 | 31.6 ms | 13.8 ms | 12.4 ms |
 
 The probe copied the bands with the 2D-DMA, which ESP-IDF keeps private; the
 adapter uses the GDMA, which every ESP-IDF version offers and which copied a
@@ -801,9 +804,12 @@ costs a little more here. In an ESPHome firmware turning the camera through the
 same engine and the GDMA, bands of 16 rows took the camera from 20 to 30 frames
 a second on the Tab5 (the sensor's own rate) and from 28 to 38 on the Waveshare.
 
-The bands are taken when the display is created. Without room for them, for a
-band the PPA cannot turn in one piece, or once the GDMA refuses a copy, the
-picture is turned straight from PSRAM as before.
+Bands of their own rather than a lent tile were tried first and are still in
+the engine (`lv_draw_ortho_ppa_set_stage()`), but in this component's own lvgl9
+test app internal RAM had 80 KiB free in pieces, the largest 31 KiB: not room
+for two bands of 40 KiB. With a tile outside internal RAM, a band the PPA
+cannot turn in one piece, or once the GDMA refuses a copy, the picture is turned
+straight from PSRAM as before.
 
 ### Repeated images with rotation-in-draw
 

@@ -58,11 +58,10 @@ config ESP_LVGL_ADAPTER_ROTATE_IMAGE_CACHE_SIZE_KB
         aligned pixel allocations. Zero disables the cache. Cached pixels are
         allocated in PSRAM, preserving internal RAM for rendering tiles.
 
-config ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB
-    int "Internal RAM to turn large PSRAM pictures through (KiB, both bands)"
+config ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS
+    bool "Turn large PSRAM pictures through internal RAM, in bands"
     depends on ESP_LVGL_ADAPTER_ROTATE_IN_DRAW && SOC_PPA_SUPPORTED && SPIRAM
-    range 0 512
-    default 0
+    default y
     help
         A large picture in PSRAM -- a camera or video frame shown in a canvas
         or an image -- is turned onto the panel through two bands of internal
@@ -72,14 +71,16 @@ config ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB
         a turn slow, and it is what the panel's scan-out and a camera writing
         PSRAM slow down further.
 
-        Measured with the camera streaming, one whole picture: 1280x720 turned
-        270 on an M5Stack Tab5, 44.3 ms straight and 24.4 ms with 80 KiB (bands
-        of 16 rows), 18.7 ms with 160 KiB; 1024x600 turned 180 on a Waveshare
-        7B, 31.6 ms straight and 13.8 ms with 80 KiB.
+        The bands take no RAM of their own: while such a picture is turned no
+        tile is drawn, so the two halves of the first tile are lent as the
+        bands (64 KiB each with the default 128 KiB tiles). Only a tile in
+        internal RAM is lent; one AXI GDMA channel is taken for the copies.
 
-        The RAM is taken from internal DMA-capable memory when the display is
-        created; without room for it, pictures are turned straight, as with 0.
-        A band holds whole rows of the picture, a multiple of 8.
+        Measured with the camera streaming, one whole picture: 1280x720 turned
+        270 on an M5Stack Tab5, 44.3 ms straight, 24.4 ms through bands of 16
+        rows and 18.7 through bands of 32; 1024x600 turned 180 on a Waveshare
+        7B, 31.6, 13.8 and 12.4 ms. The default tiles give bands of 24 rows of
+        a 1280-wide picture.
 
 config ESP_LVGL_ADAPTER_PARTIAL_AUX_IMG_CACHE
     bool "Set LVGL image cache to max (partial tear-avoid modes)"

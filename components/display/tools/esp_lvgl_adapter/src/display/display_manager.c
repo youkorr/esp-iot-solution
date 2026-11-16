@@ -974,20 +974,16 @@ static void display_manager_setup_rotate_in_draw(lv_display_t *disp, esp_lv_adap
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "rotate in draw: no PPA client (%s), the CPU turns the tiles", esp_err_to_name(err));
     }
-#if CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB > 0
-    /* Two bands of internal RAM a large PSRAM picture is turned through:
-     * taken once, and said either way. */
-    lv_draw_ortho_ppa_stage_stats_t stage;
-    lv_draw_ortho_ppa_get_stage_stats(&stage, false);
-    if (err == ESP_OK && stage.band_bytes == 0) {
-        const size_t band = (size_t)CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB * 1024 / 2;
-        err = lv_draw_ortho_ppa_set_stage(band);
+#if CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_BANDS
+    /* A large PSRAM picture turned through the halves of the first tile,
+     * lent while it is turned: no RAM of its own. */
+    if (err == ESP_OK) {
+        err = lv_draw_ortho_ppa_use_tiles(true);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "rotate in draw: large PSRAM pictures turned through 2 x %u KiB of internal RAM",
-                     (unsigned)(band / 1024));
+            ESP_LOGI(TAG, "rotate in draw: large PSRAM pictures turned through the first tile, lent in two bands");
         } else {
-            ESP_LOGW(TAG, "rotate in draw: no 2 x %u KiB of internal RAM (%s), large pictures turned from PSRAM",
-                     (unsigned)(band / 1024), esp_err_to_name(err));
+            ESP_LOGW(TAG, "rotate in draw: no GDMA copy for the bands (%s), large pictures turned from PSRAM",
+                     esp_err_to_name(err));
         }
     }
 #endif

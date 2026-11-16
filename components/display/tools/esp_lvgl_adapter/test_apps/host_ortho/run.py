@@ -18,7 +18,7 @@ import subprocess
 import tarfile
 import tempfile
 
-FIXTURES = '54f689172db68a00143ff88b2e0d3fbf46532faa'
+FIXTURES = 'a7c73165825b31db77327a2c0ef4f0fac2992dd5'
 CACHE_SUITE = '9db8952fc7f06438819fd4aaf28f5fb8a35a56b7'
 ADAPTER = Path(__file__).resolve().parents[2]
 UNIT = ADAPTER / 'src/display/rotate_in_draw'
@@ -281,8 +281,9 @@ void esp_rom_delay_us(uint32_t us)
     end = current.index('/* Timing ')
     end = current.rindex('/* ----', 0, end)
     main = main.replace('int main(int argc, char ** argv)', current[start:end] + 'int main(int argc, char ** argv)', 1)
-    # A camera frame in PSRAM turned through two bands of internal RAM: the
-    # fixture's own case, whole, with the fixture's camera calls beside it.
+    # A camera frame in PSRAM turned through two bands of internal RAM, and
+    # through the first tile lent as those bands: the fixture's own cases,
+    # whole, with the fixture's camera calls beside them.
     start = current.index('/* A camera frame in PSRAM, turned through two bands')
     end = current.index('/* A camera frame every time', start)
     main = main.replace('int main(int argc, char ** argv)', current[start:end] + 'int main(int argc, char ** argv)', 1)
@@ -301,6 +302,14 @@ void esp_rom_delay_us(uint32_t us)
         check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, false, -1);
         check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, true, 0);
         check_camera_staged(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, 16, 1, true, 3);
+        for(int late = 0; late < 2; late++) {
+            check_camera_lent(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, late, true, true, 0);
+            check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, late, true, true, 0);
+            check_camera_lent(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, late, true, true, 0);
+        }
+        check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 0, false, true, 0);
+        check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 0, true, false, 0);
+        check_camera_lent(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 0, true, true, (size_t)24 * 800);
         lv_draw_ortho_ppa_deinit();''', 1)
     needle = '#include "lvgl.h"\n'
     assert main.count(needle) == 1
@@ -395,6 +404,9 @@ def run_tests(work, args):
         ('band copied over one the PPA still reads', 'lv_draw_ortho_ppa.c', '            if (g_stage_reader[(i + 1) & 1] && !wait(g_stage_reader[(i + 1) & 1])) {\n                return g_queued;\n            }\n', '', 'through bands of'),
         ('band turned before it arrived', 'lv_draw_ortho_ppa.c', '        if (!copies_done()) {', '        if (0) {', 'through bands of'),
         ('every band placed as the first', 'lv_draw_ortho_ppa.c', '        place(rot, bw, bh, p->x, row + p->y, p->w, p->h, &ox, &oy);', '        place(rot, bw, bh, p->x, p->y, p->w, p->h, &ox, &oy);', 'through bands of'),
+        ('lent tile left in the cache', 'lv_draw_ortho_ppa.c', '        if (esp_cache_msync(g_loan, 2 * half, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE) != ESP_OK) {\n            return false;\n        }\n', '', 'FAIL  captioned camera'),
+        ('lent tile made one band', 'lv_draw_ortho_ppa.c', '    g_band[1] = g_loan + half;', '    g_band[1] = g_loan;', 'FAIL  captioned camera'),
+        ('no tile lent', 'lv_draw_ortho.c', '    if (lend) {\n        g_loan(tile_aligned(g_unit->tile_alloc[0]), LV_DRAW_ORTHO_TILE_BYTES);', '    if (0) {\n        g_loan(tile_aligned(g_unit->tile_alloc[0]), LV_DRAW_ORTHO_TILE_BYTES);', 'FAIL  captioned camera'),
         ('refused copy leaves the rest unturned', 'lv_draw_ortho_ppa.c', '                return queue_rest(src, block, dst, dx, dy, rot, cm, px, size, row + k, k, full, nf, last, nl);', '                return g_queued;', 'the GDMA refusing'),
         ('adapter copy written down', 'lv_draw_ortho.c', '    if (same_place && disp && lv_refr_get_disp_refreshing() == disp && sync_area_of_lvgl(disp, dest_area)) {', '    if (same_place && disp && lv_refr_get_disp_refreshing() == disp && (!disp->rendering_in_progress || sync_area_of_lvgl(disp, dest_area))) {', 'another copy at the frame'),
     ]
