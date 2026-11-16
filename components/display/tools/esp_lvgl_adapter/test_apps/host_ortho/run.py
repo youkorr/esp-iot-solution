@@ -18,7 +18,7 @@ import subprocess
 import tarfile
 import tempfile
 
-FIXTURES = 'dd3fd2b72e959345280adf3086ea22ef2d953fab'
+FIXTURES = '54f689172db68a00143ff88b2e0d3fbf46532faa'
 CACHE_SUITE = '9db8952fc7f06438819fd4aaf28f5fb8a35a56b7'
 ADAPTER = Path(__file__).resolve().parents[2]
 UNIT = ADAPTER / 'src/display/rotate_in_draw'
@@ -221,7 +221,9 @@ def stage(reference, work):
     original_delay = '''void esp_rom_delay_us(uint32_t us)
 {
     (void)us;
-    finish_one();
+    /* A late copy lands only once the PPA has nothing left to do. */
+    if(g_count) finish_one();
+    else land_one();
 }'''
     timed_delay = '''uint32_t g_p4_slow_out_width, g_p4_slow_out_height, g_p4_slow_max_bytes;
 static int g_slow_qid;
@@ -245,7 +247,8 @@ void esp_rom_delay_us(uint32_t us)
             return;
         }
     }
-    finish_one();
+    if(g_count) finish_one();
+    else land_one();
 }'''
     assert code.count(original_delay) == 1
     code = code.replace(original_delay, timed_delay)
@@ -278,6 +281,27 @@ void esp_rom_delay_us(uint32_t us)
     end = current.index('/* Timing ')
     end = current.rindex('/* ----', 0, end)
     main = main.replace('int main(int argc, char ** argv)', current[start:end] + 'int main(int argc, char ** argv)', 1)
+    # A camera frame in PSRAM turned through two bands of internal RAM: the
+    # fixture's own case, whole, with the fixture's camera calls beside it.
+    start = current.index('/* A camera frame in PSRAM, turned through two bands')
+    end = current.index('/* A camera frame every time', start)
+    main = main.replace('int main(int argc, char ** argv)', current[start:end] + 'int main(int argc, char ** argv)', 1)
+    needle = '''        check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+        lv_draw_ortho_ppa_deinit();'''
+    assert main.count(needle) == 1
+    main = main.replace(needle, '''        check_camera(360, 640, LV_DISPLAY_ROTATION_270, 320, 180);
+        for(int late = 0; late < 2; late++) {
+            check_camera_staged(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, 16, late, true, -1);
+            check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, late, true, -1);
+            check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 8, late, true, -1);
+            check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 24, late, true, -1);
+        }
+        check_camera_staged(600, 1024, LV_DISPLAY_ROTATION_180, 400, 300, 300, 0, true, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 4, 0, true, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, false, -1);
+        check_camera_staged(360, 640, LV_DISPLAY_ROTATION_270, 320, 180, 32, 0, true, 0);
+        check_camera_staged(400, 640, LV_DISPLAY_ROTATION_90, 322, 182, 16, 1, true, 3);
+        lv_draw_ortho_ppa_deinit();''', 1)
     needle = '#include "lvgl.h"\n'
     assert main.count(needle) == 1
     main = main.replace(needle, needle + '#include "lvgl_private.h"\n', 1)
@@ -368,6 +392,10 @@ def run_tests(work, args):
         ('border corners counted as clear', 'lv_draw_ortho.c', '        cross(j, &t->area, d->width, LV_MAX(d->width, d->radius), &t->area);', '        cross(j, &t->area, d->width, d->width, &t->area);', 'in its corner: '),
         ('empty refresh copies dropped', 'lv_draw_ortho.c', '            sync_behind(d, &a);', '            if (disp->inv_p) {\n                sync_behind(d, &a);\n            }', 'differs from one buffer'),
         ('frame areas not turned', 'lv_draw_ortho.c', '        if (lv_display_get_matrix_rotation(disp)) {\n            lv_display_rotate_area(disp, &drawn[nd]);\n        }', '', 'differs from one buffer'),
+        ('band copied over one the PPA still reads', 'lv_draw_ortho_ppa.c', '            if (g_stage_reader[(i + 1) & 1] && !wait(g_stage_reader[(i + 1) & 1])) {\n                return g_queued;\n            }\n', '', 'through bands of'),
+        ('band turned before it arrived', 'lv_draw_ortho_ppa.c', '        if (!copies_done()) {', '        if (0) {', 'through bands of'),
+        ('every band placed as the first', 'lv_draw_ortho_ppa.c', '        place(rot, bw, bh, p->x, row + p->y, p->w, p->h, &ox, &oy);', '        place(rot, bw, bh, p->x, p->y, p->w, p->h, &ox, &oy);', 'through bands of'),
+        ('refused copy leaves the rest unturned', 'lv_draw_ortho_ppa.c', '                return queue_rest(src, block, dst, dx, dy, rot, cm, px, size, row + k, k, full, nf, last, nl);', '                return g_queued;', 'the GDMA refusing'),
         ('adapter copy written down', 'lv_draw_ortho.c', '    if (same_place && disp && lv_refr_get_disp_refreshing() == disp && sync_area_of_lvgl(disp, dest_area)) {', '    if (same_place && disp && lv_refr_get_disp_refreshing() == disp && (!disp->rendering_in_progress || sync_area_of_lvgl(disp, dest_area))) {', 'another copy at the frame'),
     ]
     for name, filename, before, after, expected in mutations:

@@ -703,6 +703,7 @@ Configure via `idf.py menuconfig`:
 | `ESP_LV_ADAPTER_PARTIAL_AUX_IMG_CACHE` | Resolve repeated decoding issues in partial modes by setting image cache to max |
 | `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` | LVGL 9.5/9.6: draw a rotated `DOUBLE_DIRECT` display in the panel's orientation (see Rotation Limitations) |
 | `ESP_LVGL_ADAPTER_ROTATE_IMAGE_CACHE_SIZE_KB` | Optional PSRAM budget for immutable rotated images; zero disables it (default) |
+| `ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB` | Optional internal RAM a large PSRAM picture (camera, video) is turned through, both bands together; zero disables it (default) |
 
 **Default Task Stack Size**:
 - LVGL adapter task stack: 8KB
@@ -772,6 +773,37 @@ component caches. These hooks use LVGL internals and require review when upgradi
 LVGL. Performance depends on the workload and memory contention; avoiding the
 final frame-rotation pass does not remove tile transfers or DIRECT-buffer
 synchronization. See the host tests for exact and bounded pixel-comparison cases.
+
+### Camera and video frames with rotation-in-draw
+
+A large picture in PSRAM that changes every frame -- a camera buffer shown in
+a canvas, a decoded video frame -- cannot be cached and is turned onto the
+panel each time. The PPA reading it from PSRAM is the slow half of that turn:
+writing the frame buffer costs it nothing over writing internal RAM, but its
+16x16 macro-block reads of PSRAM take twice as long, and longer still while the
+panel scans out and a camera writes PSRAM.
+
+`CONFIG_ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB` gives such a picture two bands of
+internal DMA-capable RAM: the AXI GDMA (`esp_async_memcpy`) copies a band of the
+picture's whole rows into one in a single run while the PPA turns the band before
+out of the other. A band holds as many rows as fit, a multiple of 8. Measured by
+a probe firmware on each board, the panel scanning out and the camera streaming:
+
+| A whole picture, the camera streaming | straight from PSRAM | bands of 16 rows | bands of 32 rows |
+|---|---:|---:|---:|
+| Tab5, 1280x720 turned 270 | 44.3 ms | 24.4 ms (80 KiB) | 18.7 ms (160 KiB) |
+| Waveshare 7B, 1024x600 turned 180 | 31.6 ms | 13.8 ms (64 KiB) | 12.4 ms (128 KiB) |
+
+The probe copied the bands with the 2D-DMA, which ESP-IDF keeps private; the
+adapter uses the GDMA, which every ESP-IDF version offers and which copied a
+whole picture in 13.8 ms against the 2D-DMA's 9.4 on the same Tab5, so a band
+costs a little more here. In an ESPHome firmware turning the camera through the
+same engine and the GDMA, bands of 16 rows took the camera from 20 to 30 frames
+a second on the Tab5 (the sensor's own rate) and from 28 to 38 on the Waveshare.
+
+The bands are taken when the display is created. Without room for them, for a
+band the PPA cannot turn in one piece, or once the GDMA refuses a copy, the
+picture is turned straight from PSRAM as before.
 
 ### Repeated images with rotation-in-draw
 

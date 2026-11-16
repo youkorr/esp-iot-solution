@@ -691,6 +691,7 @@ static void panel_wake_cb(void *user_data)
 | `ESP_LV_ADAPTER_PARTIAL_AUX_IMG_CACHE` | 解决局部刷新下的重复解码问题，将图片缓存设置为最大 |
 | `ESP_LVGL_ADAPTER_ROTATE_IN_DRAW` | LVGL 9.5/9.6：以面板原生方向绘制旋转后的 `DOUBLE_DIRECT` 显示（见旋转限制） |
 | `ESP_LVGL_ADAPTER_ROTATE_IMAGE_CACHE_SIZE_KB` | 不可变旋转图像的可选 PSRAM 预算，默认为 0（关闭） |
+| `ESP_LVGL_ADAPTER_ROTATE_VIDEO_RAM_KB` | 可选：大尺寸 PSRAM 图像（摄像头、视频）经由内部 RAM 旋转时使用的两个条带的总大小，默认为 0（关闭） |
 
 **默认任务栈大小**：
 - LVGL 适配器任务栈：8KB
